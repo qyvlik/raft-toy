@@ -8,14 +8,16 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
-class RaftNodeRunnerTest {
+class RaftLogReplicationTest {
 
     private final Logger logger = LoggerFactory.getLogger(getClass());
 
     @Test
     void exec() {
         long period = 100L;
+        long baseDelay = 1000L;
         int nodeSize = 3;
         Set<String> nodeIds = new HashSet<>();
         while (nodeSize-- > 0) {
@@ -30,11 +32,15 @@ class RaftNodeRunnerTest {
             createRunnerAndExec(nodeId, nodeIds, runnerMap, executor);
         }
 
-        startHeartbeat(runnerMap, 1000L + (long) (period * 0.3), period);
+        startHeartbeat(runnerMap, baseDelay + (long) (period * 0.3), period);
 
-        startFollowerTimeout(runnerMap, 1000, period);
+        startFollowerTimeout(runnerMap, baseDelay, period);
 
-        startCandidateTimeout(runnerMap, 1000L + (long) (period * 0.6), period);
+        startCandidateTimeout(runnerMap, baseDelay + (long) (period * 0.6), period);
+
+        startClient(runnerMap, baseDelay + (long) (period * 2.3), 2000L);
+
+        startPrintNodeLog(runnerMap, baseDelay * 30, 30000L);
 
         while (true) {
             sleep(1);
@@ -86,6 +92,57 @@ class RaftNodeRunnerTest {
                 }, initialDelay, period, TimeUnit.MILLISECONDS);
     }
 
+
+    private void startPrintNodeLog(Map<String, RaftNodeRunner> runnerMap,
+                                   long initialDelay,
+                                   long period) {
+        ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+        scheduledExecutorService.scheduleAtFixedRate(
+                new Runnable() {
+                    @Override
+                    public void run() {
+                        for (RaftNodeRunner raftNodeRunner : runnerMap.values()) {
+                            raftNodeRunner.send(RaftCommand.printNodeLog());
+                        }
+                    }
+                }, initialDelay, period, TimeUnit.MILLISECONDS);
+    }
+
+    private void startClient(Map<String, RaftNodeRunner> runnerMap,
+                             long initialDelay,
+                             long period) {
+        Runnable runnable = new Runnable() {
+            AtomicLong value = new AtomicLong(0);
+
+            @Override
+            public void run() {
+                for (RaftNodeRunner raftNodeRunner : runnerMap.values()) {
+                    if (raftNodeRunner.getRaftRole().equals(RaftNode.RaftRole.Leader)) {
+                        RaftCommand raftCommand = new RaftCommand();
+                        raftCommand.setType(RaftCommand.Type.clientCommand);
+
+                        ClientCommand clientCommand = new ClientCommand();
+                        clientCommand.setAction("put");
+                        clientCommand.setKey("x");
+                        clientCommand.setValue("" + value.incrementAndGet());
+                        raftCommand.setParams(clientCommand);
+
+                        RaftCommand.Callback callback = new RaftCommand.Callback() {
+                            @Override
+                            public void ret(Object result) {
+                                logger.info("client-command node:{}, :{}, result:{}",
+                                        raftNodeRunner.getNodeId(), clientCommand, result);
+                            }
+                        };
+                        raftCommand.setCallback(callback);
+                        raftNodeRunner.send(raftCommand);
+                    }
+                }
+            }
+        };
+        ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+        scheduledExecutorService.scheduleAtFixedRate(runnable, initialDelay, period, TimeUnit.MILLISECONDS);
+    }
 
     private void createRunnerAndExec(String nodeId,
                                      Set<String> nodeIds,

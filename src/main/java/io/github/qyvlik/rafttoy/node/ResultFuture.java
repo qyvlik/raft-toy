@@ -23,13 +23,20 @@ public class ResultFuture<T> implements Future<T> {
 
     @Override
     public T get() throws InterruptedException, ExecutionException {
-        latch.await();
+        if (latch.getCount() > 0) {
+            latch.await();
+        }
+
         return this.result;
     }
 
     @Override
     public T get(long timeout, TimeUnit unit)
             throws InterruptedException, ExecutionException, TimeoutException {
+        if (latch.getCount() == 0) {
+            return this.result;
+        }
+
         if (latch.await(timeout, unit)) {
             return this.result;
         } else {

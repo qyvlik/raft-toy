@@ -28,4 +28,9 @@ public class RaftLog {
     public void setClientCommand(ClientCommand clientCommand) {
         this.clientCommand = clientCommand;
     }
+
+    @Override
+    public String toString() {
+        return "|" + term + "|" + logIndex + "|" + clientCommand + "|";
+    }
 }

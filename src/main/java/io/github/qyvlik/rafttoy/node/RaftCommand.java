@@ -5,6 +5,14 @@ public class RaftCommand {
     private Object params;
     private Callback callback;
 
+    public static RaftCommand printNodeLog() {
+        RaftCommand command = new RaftCommand();
+        command.setCallback(null);
+        command.setParams(null);
+        command.setType(Type.printNodeLog);
+        return command;
+    }
+
     public static RaftCommand heartbeat() {
         RaftCommand command = new RaftCommand();
         command.setCallback(null);
@@ -64,7 +72,8 @@ public class RaftCommand {
         candidateTimeout,
         appendEntries,
         requestVote,
-        clientCommand
+        clientCommand,
+        printNodeLog
     }
 
     public interface Callback {

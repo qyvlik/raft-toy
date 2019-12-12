@@ -20,6 +20,14 @@ public class RaftNodeRunner implements Runnable {
         queue.add(raftCommand);
     }
 
+    public RaftNode.RaftRole getRaftRole() {
+        return this.raftNode.getRaftRole();
+    }
+
+    public String getNodeId() {
+        return this.raftNode.getNodeId();
+    }
+
     private void checkTimeout(RaftCommand.Type type) {
         // todo all roles receiveAppendEntries
         switch (raftNode.getRaftRole()) {
@@ -31,13 +39,11 @@ public class RaftNodeRunner implements Runnable {
 
                 boolean candidateVoteTimeOut = raftNode.checkCandidateVoteTimeOut();
                 if (candidateVoteTimeOut) {
-                    boolean mostVoteGranted = raftNode.beCandidateBecauseVoteTimeoutAndSendVoteImmediately();
+                    boolean mostVoteGranted = raftNode.beCandidateAndSendVoteImmediately("voteTimeout");
                     if (mostVoteGranted) {
-                        raftNode.beLeaderAndHeartbeatImmediately(3);
+                        raftNode.beLeaderAndHeartbeatImmediately(1);
                     }
                 }
-
-
             }
             break;
             case Follower: {
@@ -48,14 +54,10 @@ public class RaftNodeRunner implements Runnable {
 
                 // 心跳超时，发起选举
                 // 无任何请求持续一段时间，发起选举
-                boolean followerLastHandleTimeout = raftNode.checkFollowerLastHandleTimeout();
-                boolean heartbeatTimeout = raftNode.checkLeaderHeartbeatTimeOut();
-                if (followerLastHandleTimeout || heartbeatTimeout) {
-//                    logger.info("beCandidate node:{} followerLastHandleTimeout:{}, heartbeatTimeout:{}",
-//                            raftNode.getNodeId(), followerLastHandleTimeout, heartbeatTimeout);
-                    boolean mostVoteGranted = raftNode.beCandidateBecauseHeartbeatTimeoutAndSendVoteImmediately();
+                if (raftNode.checkFollowerTimeout()) {
+                    boolean mostVoteGranted = raftNode.beCandidateAndSendVoteImmediately("heartbeatTimeout");
                     if (mostVoteGranted) {
-                        raftNode.beLeaderAndHeartbeatImmediately(3);
+                        raftNode.beLeaderAndHeartbeatImmediately(1);
                     }
                 }
             }
@@ -65,13 +67,13 @@ public class RaftNodeRunner implements Runnable {
                     break;
                 }
 
-                if (leaderHeartbeatTimes > 200 * Math.random()) {
-                    // todo 让 Leader 故障
-                    logger.info("Leader heartbeat broken");
+                if (leaderHeartbeatTimes > 20 * Math.random()) {
+//                 todo 让 Leader 故障
+                    // logger.info("Leader heartbeat broken");
                     break;
                 }
 
-                logger.info("Leader heartbeat");
+                // logger.info("Leader heartbeat");
                 raftNode.heartbeat();
 
                 leaderHeartbeatTimes++;
@@ -124,8 +126,17 @@ public class RaftNodeRunner implements Runnable {
                     }
                 }
                 break;
-                case clientCommand:
-                    break;
+                case clientCommand: {
+                    ClientCommandResult result = raftNode.receiveClientCommand((ClientCommand) raftCommand.getParams());
+                    if (raftCommand.getCallback() != null && result != null) {
+                        raftCommand.getCallback().ret(result);
+                    }
+                }
+                break;
+                case printNodeLog: {
+                    raftNode.printLog(5);
+                }
+                break;
             }
         }
     }
