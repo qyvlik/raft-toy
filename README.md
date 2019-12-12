@@ -20,10 +20,10 @@
 
 ### Follower
 
-- 响应来自候选人和领导者的请求
-- 如果在超过选举超时时间的情况之前都没有收到领导人的心跳，或者是候选人请求投票的，就自己变成候选人
-- 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，那么就令 currentTerm 等于 T，并切换状态为跟随者（5.1 节）
-- 如果commitIndex > lastApplied，那么就 lastApplied 加一，并把log[lastApplied]应用到状态机中（5.3 节）
+1. 响应来自候选人和领导者的请求
+2. 如果在超过选举超时时间的情况之前都没有收到领导人的心跳，或者是候选人请求投票的，就自己变成候选人
+3. 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，那么就令 currentTerm 等于 T，并切换状态为跟随者（5.1 节）
+4. 如果commitIndex > lastApplied，那么就 lastApplied 加一，并把log[lastApplied]应用到状态机中（5.3 节）
 
 - receive `heartbeat` or `appendEntries`
     1. 如果 `term < currentTerm`, 则返回 `false`
@@ -37,34 +37,31 @@
     7. 如果 `leaderCommit > commitIndex` 则 `commitIndex = min(leaderCommit, min(entries[*].logIndex))`
     8. 如果 `commitIndex > lastApplied` ，那么就 `lastApplied` 加一，并把 `log[lastApplied]` 应用到状态机中（5.3 节）
     9. 返回 `currentTerm` 和 `true`
-    
-> todo, 如果是 **Leader**，会接受其他节点的请求吗？
 
 - receive `requestVote`
     1. 如果 `term < currentTerm` 返回 false （5.2 节）
-    2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout，继续执行
-    3. 重置 Follower 的 timeout
-    4. 如果 `votedFor` 为**空**或者为 `candidateId`，并且候选人的日志至少和自己一样新，那么就投票给他（5.2 节，5.4 节）
-        > todo， 判断的是 commitIndex 和 lastLogIndex?
+    2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，继续执行
+    3. 如果 `votedFor` 为**空**或者为 `candidateId`，并且候选人的日志至少和自己一样新，那么就投票给他（5.2 节，5.4 节）
+        > info: 判断的是 commitIndex 和 lastLogIndex?
         > `(votedFor == null or votedFor == '' or votedFor == candidateId) and (lastLogIndex > log.last().logIndex)`
-        > `(votedFor == null or votedFor == '' or votedFor == candidateId) and (lastLogIndex > commitIndex)`
-> todo, 如果是 **Leader**，接收其他节点的投票请求吗？
+    4. 如果投票给 Candidate，那么重置 **Follower** 的 timeout
+        > 防止 Follower 过早进入选举
 
 - `timeout`
     1. 如果在超过选举超时时间的情况之前都没有收到领导人的心跳，或者是候选人请求投票的，就自己变成候选人
     
 ### Candidate
 
-- 在转变成候选人后就立即开始选举过程
-    - 自增当前的任期号（currentTerm）
-    - 给自己投票
-    - 重置选举超时计时器
-    - 发送请求投票的 RPC 给其他所有服务器
-- 如果接收到大多数服务器的选票，那么就变成领导人
-- 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
-- 如果选举过程超时，再次发起一轮选举
-- 如果接收到的 RPC 请求或响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
-- 如果 `commitIndex > lastApplied`，那么就 `lastApplied` 加一，并把log[lastApplied]应用到状态机中（5.3 节）
+1. 在转变成候选人后就立即开始选举过程
+    1. 自增当前的任期号（currentTerm）
+    2. 给自己投票
+    3. 重置选举超时计时器
+    4 发送请求投票的 RPC 给其他所有服务器
+2. 如果接收到大多数服务器的选票，那么就变成领导人
+3. 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
+4. 如果选举过程超时，再次发起一轮选举
+5. 如果接收到的 RPC 请求或响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
+6. 如果 `commitIndex > lastApplied`，那么就 `lastApplied` 加一，并把log[lastApplied]应用到状态机中（5.3 节）
 
 - receive `heartbeat` or `appendEntries`
     1. 如果 `term < currentTerm`, 则返回 `false`
@@ -73,13 +70,10 @@
         > 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
 
 - receive `requestVote`
-    1. 如果 `term < currentTerm` 返回 false （5.2 节）
+    1. 如果 `term <= currentTerm` 返回 false （5.2 节）
+        > 如果 `term = currentTerm`，但是 Candidate 已经投票给自己，所以不会在投票给其他节点
     2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout，继续执行
-    3. 重置 Follower 的 timeout
-    4. 如果 `votedFor` 为**空**或者为 `candidateId`，并且候选人的日志至少和自己一样新，那么就投票给他（5.2 节，5.4 节）
-        > todo， 判断的是 commitIndex 和 lastLogIndex?
-        > `(votedFor == null or votedFor == '' or votedFor == candidateId) and (lastLogIndex > log.last().logIndex)`
-        > `(votedFor == null or votedFor == '' or votedFor == candidateId) and (lastLogIndex > commitIndex)`
+        > info： 应该以 **Follower** 角色继续执行
 
 - send `requestVote`
     1. 发送选举前，执行如下：
@@ -87,25 +81,39 @@
         2. 给自己投票
         3. 重置选举超时计时器
         4. 发送请求投票的 RPC 给其他所有服务器
-    2. 如果接收到的 RPC 响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
-        > loop 选出最大的 `T`，然后退出选举流程
-    3. 如果接收到大多数服务器的选票，那么就变成领导人
-    4. 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
-    5. 如果选举过程超时，再次发起一轮选举
+    2. 投票用的参数 `lastLogIndex` 以及 `lastLogTerm` 是 `log` 最新的一条，如过 `log` 为空，均设置为 0
+    3. 如果接收到的 RPC 响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
+        > loop 选出最大的 `T`，切换角色为**Follower**，重置**Follower** timeout，然后退出选举流程
+    4. 如果接收到大多数服务器的选票，那么就变成领导人
+    5. 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
+    6. 如果选举过程超时，再次发起一轮选举
+
+- `timeout`
+    1. 如果选举超时，且未成为 `Leader`，则重新发起选举
 
 ### Leader
+
+1. 一旦成为领导人：发送空的附加日志 RPC（心跳）给其他所有的服务器；在一定的空余时间之后不停的重复发送，以阻止跟随者超时（5.2 节）
+2. 如果接收到来自客户端的请求：附加条目到本地日志中，在条目被应用到状态机后响应客户端（5.3 节）
+3. 如果对于一个跟随者，最后日志条目的索引值大于等于 `nextIndex`，那么：发送从 `nextIndex` 开始的所有日志条目：
+    1. 如果成功：更新相应跟随者的 `nextIndex` 和 `matchIndex`
+    2. 如果因为日志不一致而失败，减少 `nextIndex` 重试
+4. 如果存在一个满足`N > commitIndex`的 `N`，并且大多数的`matchIndex[i] ≥ N`成立，并且`log[N].term == currentTerm`成立，那么令 `commitIndex` 等于这个 `N` （5.3 和 5.4 节）
+5. 如果接收到的 RPC 请求或响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
+6. 如果 `commitIndex > lastApplied`，那么就 `lastApplied` 加一，并把log[lastApplied]应用到状态机中（5.3 节）
 
 - receive `heartbeat` or `appendEntries`
     1. 如果 `term <= currentTerm`, 则返回 `false`
     2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
         > info： 应该以 **Follower** 角色继续执行
-   
+
 - receive `requestVote`:
     1. 如果 `term <= currentTerm` 返回 false （5.2 节）
-    2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout，继续执行
+    2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
         > info： 应该以 **Follower** 角色继续执行
 
-
+- send `heartbeat` or `appendEntries`
+    1. 
 
 ## api
 
@@ -131,7 +139,6 @@
 > 章节 5.4 阐述了 Raft 算法是如何保证这个特性的；
 > 这个解决方案涉及到一个额外的选举机制（5.2 节）上的限制。
 
-### 
 
 ### 
 

@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 class RaftLogReplicationTest {
 
-    private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final Logger logger = LoggerFactory.getLogger("RaftLogReplicationTest");
 
     @Test
     void exec() {
@@ -130,8 +130,10 @@ class RaftLogReplicationTest {
                         RaftCommand.Callback callback = new RaftCommand.Callback() {
                             @Override
                             public void ret(Object result) {
-                                logger.info("client-command node:{}, :{}, result:{}",
-                                        raftNodeRunner.getNodeId(), clientCommand, result);
+                                if (!((ClientCommandResult) result).getResult().contains("success")) {
+                                    logger.warn("client-command node:{}, :{}, result:{}",
+                                            raftNodeRunner.getNodeId(), clientCommand, result);
+                                }
                             }
                         };
                         raftCommand.setCallback(callback);

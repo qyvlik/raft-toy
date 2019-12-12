@@ -12,7 +12,7 @@ import java.util.concurrent.TimeoutException;
 // https://github.com/maemual/raft-zh_cn/blob/master/raft-zh_cn.md#5-raft-%E4%B8%80%E8%87%B4%E6%80%A7%E7%AE%97%E6%B3%95
 public class RaftNode {
 
-    private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final Logger logger = LoggerFactory.getLogger("RaftNode");
     private final long lastheartbeatTimeout = 1000L;
     private final long lastHandleTimeout = lastheartbeatTimeout;
     private final long candidateVoteTimeout = 300L;
@@ -36,7 +36,7 @@ public class RaftNode {
     private Map<String, Long> matchIndex;                 // 对于每一个服务器，已经复制给他的日志的最高索引值
     private Long candidateVoteTime;
     private Long lastHeartbeatTime;
-    private Long lastHandleTime;                            // todo 只要接收到请求就设置时间？亦或者是正确成功处理请求再设置时间？
+    private Long lastHandleTime;                          // info: 只要接收到请求就设置时间？亦或者是正确成功处理请求再设置时间？
 
     public RaftNode(String nodeId, Set<String> nodes, RaftRpcSender raftRpcSender) {
 //        logger.info("raft-node create:{}", nodeId);
@@ -54,6 +54,8 @@ public class RaftNode {
         this.lastHeartbeatTime = System.currentTimeMillis();
         this.candidateVoteTime = System.currentTimeMillis();
         this.lastHandleTime = System.currentTimeMillis();
+        this.nextIndex = null;
+        this.matchIndex = null;
     }
 
     public static <T> T getResultFromFuture(Future<T> future, long timeoutMs) {
@@ -71,6 +73,11 @@ public class RaftNode {
     private void setRaftRole(RaftRole raftRole, String reason) {
         RaftRole oldRole = this.raftRole;
         this.raftRole = raftRole;
+
+        if (raftRole.equals(RaftRole.Follower)) {
+            this.nextIndex = null;
+            this.matchIndex = null;
+        }
 
         if (oldRole == null || !raftRole.equals(oldRole)) {
             logger.info("{} change role:{} -> {}, reason:{}", nodeId, oldRole, raftRole, reason);
@@ -128,27 +135,37 @@ public class RaftNode {
                     this.getNodeId(), this.getRaftRole(), reason);
         }
 
-        // todo check role ?
         this.lastHeartbeatTime = System.currentTimeMillis();
         this.lastHandleTime = System.currentTimeMillis();
     }
 
-    private void resetCandidateTimeout(String reason) {
-        if (!this.getRaftRole().equals(RaftRole.Candidate)) {
-            logger.error("resetCandidateTimeout error : {} role:{}, reason:{}",
-                    this.getNodeId(), this.getRaftRole(), reason);
-        }
-
-        this.candidateVoteTime = System.currentTimeMillis();
-    }
-
+    /**
+     * 自身投票后，再重置 Follower timeout
+     *
+     * @param votedFor 被投票节点
+     */
     private void setVote(String votedFor) {
         this.votedFor = votedFor;
-        this.candidateVoteTime = null;          // 清空超时
+        this.candidateVoteTime = null;                          // 清空超时
         restFollowerTimeout("votedFro:" + votedFor);
     }
 
-    private void clearCandidate() {
+    /**
+     * 给自己投票
+     */
+    private void voteSelf() {
+        this.leaderId = null;
+        this.currentTerm += 1;
+        this.votedFor = this.getNodeId();
+        this.candidateVoteTime = System.currentTimeMillis();
+        this.lastHeartbeatTime = null;
+        this.lastHandleTime = null;
+    }
+
+    /**
+     * 清空选举相关
+     */
+    private void clearVote() {
         this.setVotedFor(null);
         this.candidateVoteTime = null;
     }
@@ -165,21 +182,12 @@ public class RaftNode {
     public boolean checkCandidateVoteTimeOut() {
         long currentTimeMillis = System.currentTimeMillis();
         if (this.candidateVoteTime == null) {
-
-//            return currentTimeMillis - this.startupTime > candidateVoteTimeout * Math.random();
             return false;
         }
 
         long finalTimeout = (long) (candidateVoteTimeout * (1 + Math.random()));
 
-        boolean result = currentTimeMillis - this.candidateVoteTime > finalTimeout;
-
-//        if (result) {
-//            logger.info("candidateVoteTimeOut, node:{} current-time:{}, candidate-vote:{}, timeout:{}",
-//                    this.getNodeId(), currentTimeMillis, candidateVoteTime, finalTimeout);
-//        }
-
-        return result;
+        return currentTimeMillis - this.candidateVoteTime > finalTimeout;
     }
 
 
@@ -283,7 +291,6 @@ public class RaftNode {
      * @return 请求投票 结果
      */
     public RequestVoteResult receiveRequestVote(RequestVoteParams params) {
-        // logger.info("receiveRequestVote:{}, params:{}", nodeId, params);
         // 1. 如果term < currentTerm返回 false （5.2 节）
         if (params.getTerm() < this.currentTerm) {
             return new RequestVoteResult(this.currentTerm, false);
@@ -298,8 +305,8 @@ public class RaftNode {
 
         // info 如果是 领导人，接收其他节点的竞选请求吗？
         if (this.getRaftRole().equals(RaftRole.Leader)) {
-            logger.info("receiveRequestVote reject {}, {} is Leader",
-                    params.getCandidateId(), this.getNodeId());
+            logger.info("{} is leader reject {} vote",
+                    this.getNodeId(), params.getCandidateId());
             return new RequestVoteResult(this.currentTerm, false);
         }
 
@@ -308,7 +315,7 @@ public class RaftNode {
             RaftLog lastRaftLog = this.getLastRaftLog();
             if (params.getLastLogIndex().compareTo(lastRaftLog.getLogIndex()) >= 0) {
 
-                this.setVotedFor(params.getCandidateId());
+                this.setVote(params.getCandidateId());
 
                 return new RequestVoteResult(this.currentTerm, true);
             }
@@ -379,29 +386,6 @@ public class RaftNode {
     }
 
     /**
-     * 所有服务器 都会执行如下操作
-     * - 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，那么就令 currentTerm 等于 T，并切换状态为跟随者（5.1 节）
-     *
-     * @param term
-     * @return
-     */
-    private boolean beFollowerIfCurrentTermLessThanTerm(Long term, String reason) {
-        if (term > this.currentTerm) {
-
-            // logger.info("beFollowerIfCurrentTermLessThanTerm:{}, term:{}", this.getNodeId(), term);
-
-            // 一个服务器节点继续保持着跟随者状态只要他从领导人或者候选者处接收到有效的 RPCs。
-
-            setRaftRole(RaftRole.Follower, reason);
-            this.currentTerm = term;
-            this.restFollowerTimeout(reason);
-            this.clearCandidate();
-            return true;
-        }
-        return false;
-    }
-
-    /**
      * 任何节点收到 term > currentTerm，都必须切换为 Follower
      *
      * @param params params
@@ -413,22 +397,33 @@ public class RaftNode {
             this.currentTerm = params.getTerm();
             this.leaderId = params.getLeaderId();
             this.restFollowerTimeout(reason);
-            this.clearCandidate();                  // 清空选举相关
+            this.clearVote();                  // 清空选举相关
         }
     }
 
+    /**
+     * 任何节点收到 term > currentTerm，都必须切换为 Follower
+     *
+     * @param params params
+     */
     private void beFollowerWithBiggerTerm(RequestVoteParams params) {
         if (params.getTerm() > this.currentTerm) {
             String reason = "RequestVoteParams:" + params.getCandidateId() + ", " + params.getTerm();
             setRaftRole(RaftRole.Follower, reason);
             this.currentTerm = params.getTerm();
-            this.restFollowerTimeout(reason);
             this.leaderId = null;
-            this.votedFor = params.getCandidateId();
-            this.candidateVoteTime = null;
+            // 成功投票后再 清空 timeout，任期大不代表就一定可以当选 Leader
+            // this.restFollowerTimeout(reason);
+            this.clearVote();
         }
     }
 
+    /**
+     * 任何节点收到 term > currentTerm，都必须切换为 Follower
+     *
+     * @param node node
+     * @param term term
+     */
     private void beFollowerWithVoteResult(String node, Long term) {
         if (term > this.currentTerm) {
             String reason = "RequestVoteResult:" + node + ", " + term;
@@ -436,18 +431,24 @@ public class RaftNode {
             this.currentTerm = term;
             this.leaderId = null;
             this.restFollowerTimeout(reason);
-            this.clearCandidate();
+            this.clearVote();
         }
     }
 
-    private void beFollowerWithAppendEntries(String node, Long term) {
+    /**
+     * 任何节点收到 term > currentTerm，都必须切换为 Follower
+     *
+     * @param node node
+     * @param term term
+     */
+    private void beFollowerWithAppendEntriesResult(String node, Long term) {
         if (term > this.currentTerm) {
             String reason = "AppendEntriesResult:" + node + ", " + term;
             setRaftRole(RaftRole.Follower, reason);
             this.currentTerm = term;
             this.leaderId = null;
             this.restFollowerTimeout(reason);
-            this.clearCandidate();
+            this.clearVote();
         }
     }
 
@@ -464,29 +465,18 @@ public class RaftNode {
         if (params.getTerm() < this.currentTerm) {
             return;
         }
-        String reason = "C -> F :" + params.getLeaderId() + ", " + params.getTerm();
+        String reason = "AppendEntriesParams:" + params.getLeaderId() + ", " + params.getTerm();
         setRaftRole(RaftRole.Follower, reason);
-        this.candidateVoteTime = null;              // 清空 选举超时
-        this.restFollowerTimeout(reason);
         this.currentTerm = params.getTerm();
         this.leaderId = params.getLeaderId();
-        this.setVotedFor(null);                     // 清空
+        this.restFollowerTimeout(reason);
+        this.clearVote();                      // 清空 选举
     }
 
     /**
-     * 如果在超过选举超时时间的情况之前都没有收到领导人的心跳，或者是候选人请求投票的，就自己变成候选人
-     * 注意，如果是已经投票了，则不用变成候选人
-     */
-    public boolean beCandidateAndSendVoteImmediately(String reason) {
-        setRaftRole(RaftRole.Candidate, reason);
-        this.currentTerm += 1;
-        this.setVotedFor(this.getNodeId());
-        this.leaderId = null;
-        this.lastHeartbeatTime = null;            // 清空 心跳超时
-        return sendRequestVote(reason);
-    }
-
-    /**
+     * - 如果在超过选举超时时间的情况之前都没有收到领导人的心跳，或者是候选人请求投票的，就自己变成候选人
+     * - 注意，如果是已经投票了，则不用变成候选人
+     * <p>
      * - 在转变成候选人后就立即开始选举过程
      * * - 自增当前的任期号（currentTerm）
      * * - 给自己投票
@@ -498,12 +488,16 @@ public class RaftNode {
      *
      * @return 成功获选，则为 true
      */
-    private boolean sendRequestVote(String reason) {
+    public boolean beCandidateAndSendVoteImmediately(String reason) {
+        setRaftRole(RaftRole.Candidate, reason);
+        this.voteSelf();
+        return sendRequestVote();
+    }
+
+    private boolean sendRequestVote() {
         if (!this.getRaftRole().equals(RaftRole.Candidate)) {
             throw new RuntimeException("RaftRole must be Candidate");
         }
-
-        resetCandidateTimeout(reason);
 
         RaftLog lastRaftLog = getLastRaftLog();
 
@@ -556,9 +550,9 @@ public class RaftNode {
         if (!mustBeFollower && voteGrantedCount >= mostNodeSize) {
             setRaftRole(RaftRole.Leader, "winByVote, term:" + this.currentTerm);
             this.leaderId = this.nodeId;
-            this.clearCandidate();                    // 清空 选举超时
-            this.lastHeartbeatTime = null;            // 清空 心跳超时
-            this.lastHandleTime = null;                // 清空 follower 无操作超时
+            this.clearVote();                           // 清空 选举超时
+            this.lastHeartbeatTime = null;              // 清空 心跳超时
+            this.lastHandleTime = null;                 // 清空 follower 无操作超时
 
             // 当一个领导人刚获得权力的时候，他初始化所有的 nextIndex 值为自己的最后一条日志的index加1（图 7 中的 11）。
             this.nextIndex = new HashMap<>();
@@ -599,6 +593,10 @@ public class RaftNode {
             entries.add(raftLog);
 
             this.log.put(currentLogIndex, raftLog);
+
+            this.nextIndex.put(this.nodeId, currentLogIndex + 1);
+            this.matchIndex.put(this.nodeId, currentLogIndex);
+
             isHeartbeat = false;
             // this.setCommitIndex(currentLogIndex);
         }
@@ -654,6 +652,8 @@ public class RaftNode {
                         logger.warn("appendEntries response not match log index:{}", entry.getKey());
                         // 维护设置 nextIndex
                         this.nextIndex.put(entry.getKey(), this.nextIndex.get(entry.getKey()) - 1);
+
+                        // todo 重发
                     }
                 }
             }
@@ -661,23 +661,22 @@ public class RaftNode {
 
         boolean mustBeFollower = this.currentTerm < biggerTerm;
         if (mustBeFollower) {
-            beFollowerWithAppendEntries(biggerTermNode, biggerTerm);
+            beFollowerWithAppendEntriesResult(biggerTermNode, biggerTerm);
             successCount = APPEND_ENTRIES_DOWN_TO_FOLLOWER;
         } else {
+
+            // Leader:
+            // 如果对于一个跟随者，最后日志条目的索引值大于等于 nextIndex，那么：发送从 nextIndex 开始的所有日志条目：
+            //   如果成功：更新相应跟随者的 nextIndex 和 matchIndex
+            //   如果因为日志不一致而失败，减少 nextIndex 重试
+            // 如果存在一个满足N > commitIndex的 N，并且大多数的matchIndex[i] ≥ N成立，并且log[N].term == currentTerm成立，
+            // 那么令 commitIndex 等于这个 N （5.3 和 5.4 节）
+
             int mostCount = getMost();
             if (!isHeartbeat && successCount >= mostCount) {
                 this.applyLogs();
             }
         }
-
-        // Leader:
-        // 如果对于一个跟随者，最后日志条目的索引值大于等于 nextIndex，那么：发送从 nextIndex 开始的所有日志条目：
-        //   如果成功：更新相应跟随者的 nextIndex 和 matchIndex
-        //   如果因为日志不一致而失败，减少 nextIndex 重试
-        // 如果存在一个满足N > commitIndex的 N，并且大多数的matchIndex[i] ≥ N成立，并且log[N].term == currentTerm成立，
-        // 那么令 commitIndex 等于这个 N （5.3 和 5.4 节）
-
-        // this.setCommitIndex(currentLogIndex);
 
         return successCount;
     }
@@ -723,7 +722,7 @@ public class RaftNode {
         int total = this.log.size();
         int head = total - tail - 1;
         int index = 0;
-        StringBuilder sb = new StringBuilder("================= " + nodeId + " =================\n");
+        StringBuilder sb = new StringBuilder("================= " + nodeId + "," + this.currentTerm + " =================\n");
         for (RaftLog raftLog : this.log.values()) {
             if (tail > 0 && index < head) {
                 index++;
@@ -736,6 +735,28 @@ public class RaftNode {
                     .append("\n");
 
         }
+
+        sb.append("------------------------------------\n");
+        sb.append("role:");
+        sb.append(this.raftRole);
+        sb.append("\n");
+        sb.append("candidateVoteTime:");
+        sb.append(this.candidateVoteTime);
+        sb.append("\n");
+        sb.append("voteFor:");
+        sb.append(this.getVotedFor());
+        sb.append("\n");
+
+        if (this.getRaftRole().equals(RaftRole.Leader)) {
+            sb.append("nextIndex:");
+            sb.append(this.nextIndex);
+            sb.append("\n");
+            sb.append("matchIndex:");
+            sb.append(this.matchIndex);
+            sb.append("\n");
+        }
+        sb.append("------------------------------------\n");
+
         sb.append("================= " + nodeId + " =================");
 
         logger.info(sb.toString());
