@@ -13,8 +13,8 @@ import java.util.concurrent.TimeoutException;
 public class RaftNode {
 
     private final Logger logger = LoggerFactory.getLogger("RaftNode");
-    private final long lastheartbeatTimeout = 1000L;
-    private final long lastHandleTimeout = lastheartbeatTimeout;
+    private final long lastHeartbeatTimeout = 1000L;
+    private final long lastHandleTimeout = lastHeartbeatTimeout;
     private final long candidateVoteTimeout = 300L;
 
     private final int APPEND_ENTRIES_DOWN_TO_FOLLOWER = -1;
@@ -110,7 +110,7 @@ public class RaftNode {
             return false;
         }
 
-        long finalTimeout = (long) (lastheartbeatTimeout * (1 + Math.random()));
+        long finalTimeout = (long) (lastHeartbeatTimeout * (1 + Math.random()));
 
         return currentTimeMillis - this.lastHeartbeatTime > finalTimeout;
     }
@@ -153,7 +153,8 @@ public class RaftNode {
     /**
      * 给自己投票
      */
-    private void voteSelf() {
+    private void voteSelf(String reason) {
+        setRaftRole(RaftRole.Candidate, reason);
         this.leaderId = null;
         this.currentTerm += 1;
         this.votedFor = this.getNodeId();
@@ -206,7 +207,6 @@ public class RaftNode {
      * @return 附加日志 结果
      */
     public AppendEntriesResult receiveAppendEntries(AppendEntriesParams params) {
-        // todo check role
         // 1. 如果 term < currentTerm 就返回 false （5.1 节）
         // info 必须 this.term == this.currentTerm 才能进行正常的处理
         if (params.getTerm() < this.currentTerm) {
@@ -215,18 +215,22 @@ public class RaftNode {
 
         boolean isHeartbeat = params.getEntries() == null || params.getEntries().size() <= 0;
 
-        if (params.getTerm() > this.currentTerm) {
-            beFollowerWithBiggerTerm(params);
-        }
-
         // info: 重置 Follower 的 timeout
         if (this.getRaftRole().equals(RaftRole.Follower)) {
             restFollowerTimeout(isHeartbeat ? "heartbeat" : "appendEntries");
         }
 
+        if (params.getTerm() > this.currentTerm) {
+            beFollowerWithBiggerTerm(params);
+        }
+
         // Candidate 如果接收到来自新的 Leader 的附加日志 RPC，转变成 Follower
         if (this.getRaftRole().equals(RaftRole.Candidate)) {
             candidateBeFollowerBecauseReceiveAppendEntries(params);
+        }
+
+        if (this.getRaftRole().equals(RaftRole.Leader)) {
+            // todo Leader reject?
         }
 
         // 2. 如果日志在 prevLogIndex 位置处的日志条目的任期号和 prevLogTerm 不匹配，则返回 false （5.3 节）
@@ -303,8 +307,10 @@ public class RaftNode {
 
         // 2. 如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他（5.2 节，5.4 节）
 
-        // info 如果是 领导人，接收其他节点的竞选请求吗？
         if (this.getRaftRole().equals(RaftRole.Leader)) {
+            // info 如果是 领导人，接收其他节点的竞选请求吗？
+            // todo, 如果 params.lastLogIndex > leader.lastLogIndex, leader 需要变为 follower 并投票吗？
+
             logger.info("{} is leader reject {} vote",
                     this.getNodeId(), params.getCandidateId());
             return new RequestVoteResult(this.currentTerm, false);
@@ -391,7 +397,7 @@ public class RaftNode {
      * @param params params
      */
     private void beFollowerWithBiggerTerm(AppendEntriesParams params) {
-        if (params.getTerm() > this.currentTerm) {
+        if (params.getTerm() > this.currentTerm && !this.getRaftRole().equals(RaftRole.Follower)) {
             String reason = "AppendEntriesParams:" + params.getLeaderId() + ", " + params.getTerm();
             setRaftRole(RaftRole.Follower, reason);
             this.currentTerm = params.getTerm();
@@ -468,9 +474,9 @@ public class RaftNode {
         String reason = "AppendEntriesParams:" + params.getLeaderId() + ", " + params.getTerm();
         setRaftRole(RaftRole.Follower, reason);
         this.currentTerm = params.getTerm();
-        this.leaderId = params.getLeaderId();
+        this.leaderId = params.getLeaderId();   // todo 是否直接认可？
         this.restFollowerTimeout(reason);
-        this.clearVote();                      // 清空 选举
+        this.clearVote();                       // 清空 选举
     }
 
     /**
@@ -489,8 +495,7 @@ public class RaftNode {
      * @return 成功获选，则为 true
      */
     public boolean beCandidateAndSendVoteImmediately(String reason) {
-        setRaftRole(RaftRole.Candidate, reason);
-        this.voteSelf();
+        this.voteSelf(reason);
         return sendRequestVote();
     }
 

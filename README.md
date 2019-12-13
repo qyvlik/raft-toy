@@ -1,6 +1,5 @@
 # raft-toy
 
-
 节点主动发起请求有如下特性：
 
 1. 只有 **Leader** 会主动发送 `appendEntries` 给其他节点
@@ -9,12 +8,22 @@
 
 节点接受请求有如下特性：
 1. 处理请求，只有在 `term = currentTerm` 情况下才可以正常进行处理请求
-2. `term > currentTerm`，当前节点必须转换为 **Follower**，然后继续处理请求
+2. `term > currentTerm`，当前节点必须转换为 **Follower**，然后继续以 **Follower** 角色继续处理请求
 3. **Follower** 接受 `appendEntries` 以及 `requestVote`
-4. **Candidate** 接受 `appendEntries`，但是不接受 `term <= currentTerm` 的 `requestVote`，因为 **Candidate** 给自身投票了
-5. **Leader** 接受 `appendEntries`，是否接受 `requestVote`？
+4. **Candidate** 接受 `term >= currentTerm` 的 `appendEntries`，转换为 **Follower**，然后继续以 **Follower** 角色继续处理请求
+5. **Candidate** 不接受 `term <= currentTerm` 的 `requestVote`，因为 **Candidate** 给自身投票了
+7. **Leader** 是否接受 `appendEntries`？
+    1. `term > currentTerm`，**Leader** 直接变为 **Follower**，然后以 **Follower** 角色继续处理请求
+    2. `term = currentTerm`，**Leader** 是否可以直接拒绝？
+8. **Leader** 是否接受 `requestVote`？
     > 如果 `requestVote` `term > currentTerm`，那么 **Leader** 变为 **Follower**，并进行投票逻辑
     > 如果 `requestVote` `term = currentTerm`，**Leader** 是否需要执行投票逻辑？
+
+节点各角色下的超时时间
+
+1. Follower 相关的超时时间应该要比 Candidate 超时时间长
+    - 否则 Follower 刚给 Candidate 投完票，但是由于 Follower 超时而变成了 Candidate
+    - 这样就会导致多个节点发起多次选举，而使 Leader 选举低效。
 
 ## role
 
@@ -22,15 +31,14 @@
 
 1. 响应来自候选人和领导者的请求
 2. 如果在超过选举超时时间的情况之前都没有收到领导人的心跳，或者是候选人请求投票的，就自己变成候选人
-3. 如果接收到的 RPC 请求或响应中，任期号T > currentTerm，那么就令 currentTerm 等于 T，并切换状态为跟随者（5.1 节）
-4. 如果commitIndex > lastApplied，那么就 lastApplied 加一，并把log[lastApplied]应用到状态机中（5.3 节）
+3. 如果接收到的 RPC 请求或响应中，任期号`T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为跟随者（5.1 节）
+4. 如果 `commitIndex > lastApplied`，那么就 `lastApplied` 加一，并把`log[lastApplied]`应用到状态机中（5.3 节）
 
 - receive `heartbeat` or `appendEntries`
     1. 如果 `term < currentTerm`, 则返回 `false`
-    2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
-        > todo 是否可以继续执行？
+    2. 重置 Follower 的 timeout
+    3. 如果 `term > currentTerm`, 设置 `currentTerm = term`
         > info： 应该以 **Follower** 角色继续执行
-    3. 重置 Follower 的 timeout
     4. 如果 **Follower** 的 `log[prevLogIndex].term != prevLogTerm`, 则返回 `false`
     5. 如果存在 `N`，使得 `log[entries[N].logIndex].term != entries[N].term`, 删除 `log[entries[N].logIndex]`（执行循环）
     6. 附加日志中尚未存在的任何新条目
@@ -113,17 +121,13 @@
         > info： 应该以 **Follower** 角色继续执行
 
 - send `heartbeat` or `appendEntries`
-    1. 
-
-## api
-
-### 
-
-- Follower 相关的超时时间应该要比 Candidate 超时时间长
-    - 否则 Follower 刚给其他 Candidate 投完票，但是由于 Follower 超时而变成了 Candidate
-    - 这样就会导致多个节点发起多次选举，而使 Leader 选举低效。
-
-- Leader 在收到 投票请求 时，如果投票请求的 term 参数大于 Leader 的 currentTerm，Leader 必须立刻变成 Follower，并立刻返回？
+    1. 发送 `heartbeat`，参数 `prevLogIndex` 以及 `prevLogIndex` 是 `log` 最新的一条，如过 `log` 为空，均设置为 0
+    2. 发送 `appendEntries`，参数 `prevLogIndex` 以及 `prevLogIndex` 取得是 `entries.first().logIndex - 1` 的那条日志
+    3. 如果接收到的 RPC 响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
+        > loop 选出最大的 `T`，切换角色为**Follower**，重置**Follower** timeout，然后退出 `heartbeat` or `appendEntries`
+    4. 返回的响应如果成功：更新相应跟随者的 `nextIndex` 和 `matchIndex`，如果因为日志不一致而失败，减少 `nextIndex` 重试
+        > 成功： `nextIndex[i] = nextIndex[i] + 1`, `matchIndex[i] = 对于每一个服务器，已经复制给他的日志的最高索引值`
+        > 失败： `nextIndex[i] = nextIndex[i] + 1`
 
 ### 问题
 
@@ -139,8 +143,8 @@
 > 章节 5.4 阐述了 Raft 算法是如何保证这个特性的；
 > 这个解决方案涉及到一个额外的选举机制（5.2 节）上的限制。
 
-
-### 
+- Leader 在收到 投票请求 时，如果投票请求的 term 参数大于 Leader 的 currentTerm，Leader 必须立刻变成 Follower，并立刻返回？
+> Leader 必须立刻变成 Follower，并以 Follower 的角色继续后续的流程。
 
 ## ref
 
@@ -149,4 +153,5 @@
 - [Raft实现指南](https://zhuanlan.zhihu.com/p/26506491)
 - [Raft-实现指北-领导选举](https://www.hashcoding.net/2018/01/07/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E9%A2%86%E5%AF%BC%E9%80%89%E4%B8%BE/)
 - [raft算法与paxos算法相比有什么优势，使用场景有什么差异？ - 朱一聪的回答 - 知乎](https://www.zhihu.com/question/36648084/answer/82332860)
-- [Raft 实现指北-开篇](https://www.hashcoding.net/2018/01/01/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E5%BC%80%E7%AF%87/) 
+- [Raft 实现指北-开篇](https://www.hashcoding.net/2018/01/01/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E5%BC%80%E7%AF%87/)
+ 
