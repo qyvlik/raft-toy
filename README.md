@@ -25,7 +25,7 @@
     > Leader 也不能投票给 Candidate，因为 Candidate.term = Leader.currentTerm 会造成 term 在集群中的混乱。
     > 可能会有具有相同 term 不同 节点担任 Leader。
 
-节点各角色下的超时时间
+节点各角色下的超时时间(raft 论文中，只有一个超时定时器，这里的实现分成两个，一个 Follower 的超时定时器，一个 Candidate 的超时定时器)
 
 1. Follower 相关的超时时间应该要比 Candidate 超时时间长
     - 否则 Follower 刚给 Candidate 投完票，但是由于 Follower 超时而变成了 Candidate
