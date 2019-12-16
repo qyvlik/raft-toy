@@ -100,10 +100,6 @@ public class RaftNode {
         return votedFor;
     }
 
-    public void setVotedFor(String votedFor) {
-        this.votedFor = votedFor;
-    }
-
     private boolean checkLeaderHeartbeatTimeOut() {
         long currentTimeMillis = System.currentTimeMillis();
         if (this.lastHeartbeatTime == null) {
@@ -145,6 +141,8 @@ public class RaftNode {
      * @param votedFor 被投票节点
      */
     private void setVote(String votedFor) {
+        this.setRaftRole(RaftRole.Follower, "voted");
+        this.leaderId = null;
         this.votedFor = votedFor;
         this.candidateVoteTime = null;                          // 清空超时
         restFollowerTimeout("votedFro:" + votedFor);
@@ -167,7 +165,7 @@ public class RaftNode {
      * 清空选举相关
      */
     private void clearVote() {
-        this.setVotedFor(null);
+        this.votedFor = null;
         this.candidateVoteTime = null;
     }
 
@@ -192,7 +190,7 @@ public class RaftNode {
     }
 
 
-    public int getMost() {
+    private int getMost() {
         return this.nodes.size() / 2 + 1;
     }
 
@@ -281,6 +279,7 @@ public class RaftNode {
         }
 
         this.leaderId = params.getLeaderId();
+        this.clearVote();
 
         this.applyLogs();
 
@@ -307,10 +306,11 @@ public class RaftNode {
 
         // 2. 如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他（5.2 节，5.4 节）
 
-        if (this.getRaftRole().equals(RaftRole.Leader)) {
-            // info 如果是 领导人，接收其他节点的竞选请求吗？
-            // todo, 如果 params.lastLogIndex > leader.lastLogIndex, leader 需要变为 follower 并投票吗？
+        // todo, 如果 term = 先不做拒绝 && params.lastLogIndex > leader.lastLogIndex, leader 需要变为 follower 并投票吗？
+        // `Candidate.term = Leader.currentTerm && Leader.lastLogIndex < Candidate.lastLogIndex`
+        // Leader 也不能投票给 Candidate，因为 Candidate.term = Leader.currentTerm 会造成 term 在集群中的混乱。
 
+        if (this.getRaftRole().equals(RaftRole.Leader)) {
             logger.info("{} is leader reject {} vote",
                     this.getNodeId(), params.getCandidateId());
             return new RequestVoteResult(this.currentTerm, false);
@@ -340,7 +340,7 @@ public class RaftNode {
             return new ClientCommandResult(this.leaderId, "this node not leader");
         }
 
-        int successCount = appendEntries(command);
+        int successCount = sendAppendEntries(command);
         // 被降级为 follower
         if (successCount == APPEND_ENTRIES_DOWN_TO_FOLLOWER) {
 
@@ -579,7 +579,7 @@ public class RaftNode {
     // * - 如果因为日志不一致而失败，减少 nextIndex 重试
     // - 如果存在一个满足N > commitIndex的 N，并且大多数的matchIndex[i] ≥ N成立，并且log[N].term == currentTerm成立，那么令 commitIndex 等于这个 N （5.3 和 5.4 节）
 
-    private int appendEntries(ClientCommand command) {
+    private int sendAppendEntries(ClientCommand command) {
         RaftLog lastRaftLog = getLastRaftLog();
 
         Long prevLogIndex = lastRaftLog.getLogIndex();
@@ -610,7 +610,7 @@ public class RaftNode {
             if (isHeartbeat) {
                 throw new RuntimeException("heartbeat only Leader");
             } else {
-                throw new RuntimeException("appendEntries only Leader");
+                throw new RuntimeException("sendAppendEntries only Leader");
             }
         }
 
@@ -654,7 +654,7 @@ public class RaftNode {
                     successCount++;
                 } else {
                     if (!isHeartbeat) {
-                        logger.warn("appendEntries response not match log index:{}", entry.getKey());
+                        logger.warn("sendAppendEntries response not match log index:{}", entry.getKey());
                         // 维护设置 nextIndex
                         this.nextIndex.put(entry.getKey(), this.nextIndex.get(entry.getKey()) - 1);
 
@@ -709,7 +709,7 @@ public class RaftNode {
         if (!this.getRaftRole().equals(RaftRole.Leader)) {
             return false;
         }
-        return appendEntries(null) != APPEND_ENTRIES_DOWN_TO_FOLLOWER;
+        return sendAppendEntries(null) != APPEND_ENTRIES_DOWN_TO_FOLLOWER;
     }
 
     private RaftLog getLastRaftLog() {

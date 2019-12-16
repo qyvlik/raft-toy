@@ -18,12 +18,24 @@
 8. **Leader** 是否接受 `requestVote`？
     > 如果 `requestVote` `term > currentTerm`，那么 **Leader** 变为 **Follower**，并进行投票逻辑
     > 如果 `requestVote` `term = currentTerm`，**Leader** 是否需要执行投票逻辑？
+    > https://github.com/hashicorp/raft/issues/235
+    > Leader 可能拒绝 `term = currentTerm` 的投票
+    > ~~Leader 的 lastLogIndex 小于 Candidate 的 lastLogIndex 时，Leader 投票给 Candidate，Leader 变为 Follower~~
+    > `Candidate.term = Leader.currentTerm && Leader.lastLogIndex < Candidate.lastLogIndex`  
+    > Leader 也不能投票给 Candidate，因为 Candidate.term = Leader.currentTerm 会造成 term 在集群中的混乱。
+    > 可能会有具有相同 term 不同 节点担任 Leader。
 
 节点各角色下的超时时间
 
 1. Follower 相关的超时时间应该要比 Candidate 超时时间长
     - 否则 Follower 刚给 Candidate 投完票，但是由于 Follower 超时而变成了 Candidate
     - 这样就会导致多个节点发起多次选举，而使 Leader 选举低效。
+
+> 读到这里，我们应该意识到，并不是任何一个Follower都有资格成为Leader，
+> 因为如果一个Follower缺少了上任Leader已经commit的日志，
+> 那它是无论如何也不能做新的Leader的，因为这会导致数据的不一致。
+> [1620秒入门Raft](https://zhuanlan.zhihu.com/p/27910576)  
+
 
 ## role
 
@@ -116,7 +128,7 @@
         > info： 应该以 **Follower** 角色继续执行
 
 - receive `requestVote`:
-    1. 如果 `term <= currentTerm` 返回 false （5.2 节）
+    1. 如果 `term <= currentTerm` 返回 false
     2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
         > info： 应该以 **Follower** 角色继续执行
 
@@ -154,4 +166,4 @@
 - [Raft-实现指北-领导选举](https://www.hashcoding.net/2018/01/07/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E9%A2%86%E5%AF%BC%E9%80%89%E4%B8%BE/)
 - [raft算法与paxos算法相比有什么优势，使用场景有什么差异？ - 朱一聪的回答 - 知乎](https://www.zhihu.com/question/36648084/answer/82332860)
 - [Raft 实现指北-开篇](https://www.hashcoding.net/2018/01/01/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E5%BC%80%E7%AF%87/)
- 
+- [Notes on Raft, the consensus protocol](https://indradhanush.github.io/blog/notes-on-raft/)

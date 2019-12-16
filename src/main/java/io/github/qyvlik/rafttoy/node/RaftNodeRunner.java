@@ -67,7 +67,7 @@ public class RaftNodeRunner implements Runnable {
                     break;
                 }
 
-                if (leaderHeartbeatTimes > 20 * Math.random()) {
+                if (leaderHeartbeatTimes > 100 * Math.random()) {
 //                 todo 让 Leader 故障
                     // logger.info("Leader heartbeat broken");
                     break;
