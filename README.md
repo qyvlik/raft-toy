@@ -37,6 +37,18 @@
 > [1620秒入门Raft](https://zhuanlan.zhihu.com/p/27910576)  
 
 
+## node send or handle rpc or time out
+
+| send or handle rpc        | Follower | Leader | Condidate |
+| ------------------------- | -------- | ------ | --------- |
+| send `AppendEntries`      | No       | Yes    | No        |
+| send `RequestVote`        | No       | No     | Yes       |
+| receive ``AppendEntries`` | Yes      | ?      | Yes       |
+| receive `RequestVote`     | Yes      | ?      | Yes       |
+| heartbeat time out        | Yes      | No     | No        |
+| election time out         | No       | No     | Yes       |
+
+
 ## role
 
 ### Follower
@@ -76,7 +88,7 @@
     1. 自增当前的任期号（currentTerm）
     2. 给自己投票
     3. 重置选举超时计时器
-    4 发送请求投票的 RPC 给其他所有服务器
+    4. 发送请求投票的 RPC 给其他所有服务器
 2. 如果接收到大多数服务器的选票，那么就变成领导人
 3. 如果接收到来自新的领导人的附加日志 RPC，转变成跟随者
 4. 如果选举过程超时，再次发起一轮选举
