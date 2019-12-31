@@ -138,11 +138,19 @@
 5. 如果接收到的 RPC 请求或响应中，任期号 `T > currentTerm`，那么就令 `currentTerm` 等于 `T`，并切换状态为**跟随者**（5.1 节）
 6. 如果 `commitIndex > lastApplied`，那么就 `lastApplied` 加一，并把log[lastApplied]应用到状态机中（5.3 节）
 
-- receive `heartbeat` or `appendEntries`
-    1. 如果 `term <= currentTerm`, 则返回 `false`
+- receive `heartbeat`
+    1. 如果 `term < currentTerm`, 则返回 `false`
     2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
         > info： 应该以 **Follower** 角色继续执行
+    3. 如果 `term = currentTerm`，且 Candidate 的日志跟 Leader 一样新，或者 Candidate 比 Leader 日志更新，Leader 投票给 Candidate，Leader 变为 Follower
 
+- `appendEntries`
+    1. 如果 `term < currentTerm`, 则返回 `false`
+    2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
+        > info： 应该以 **Follower** 角色继续执行
+    3. 如果 `term = currentTerm`
+        > todo
+    
 - receive `requestVote`:
     1. 如果 `term <= currentTerm` 返回 false
     2. 如果 `term > currentTerm`, 设置 `currentTerm = term`，重置 **Follower** 的 timeout
