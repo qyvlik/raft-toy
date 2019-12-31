@@ -191,8 +191,3 @@
 - [raft算法与paxos算法相比有什么优势，使用场景有什么差异？ - 朱一聪的回答 - 知乎](https://www.zhihu.com/question/36648084/answer/82332860)
 - [Raft 实现指北-开篇](https://www.hashcoding.net/2018/01/01/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E5%BC%80%E7%AF%87/)
 - [Notes on Raft, the consensus protocol](https://indradhanush.github.io/blog/notes-on-raft/)
-
-RaftConsensusServiceImpl.requestVote 的实现： [RaftConsensusServiceImpl.java#L67 ](https://github.com/wenweihu86/raft-java/blob/bd706cf1c7830a8de01eab9f39a2fb5fe1fe4b9a/raft-java-core/src/main/java/com/github/wenweihu86/raft/service/impl/RaftConsensusServiceImpl.java#L67)，
-当处理 requestVote 的 Node-A 的状态是 `Leader`，且 `Candidate`(Node-B) 的 term (1234) 与 `Leader` 的 currentTerm(1234) 的状态相等。
-这里有个疑问，如果 Node-A 通过了投票(符合投票要求)，并 stepDown 为 `Follower`，
-而 Node-B 成功当选 `Leader`，那么集群中就已经完成 `Leader` 更换，但是集群的 term(1234) 并没有变更，这对于集群来说，是否会有问题？
