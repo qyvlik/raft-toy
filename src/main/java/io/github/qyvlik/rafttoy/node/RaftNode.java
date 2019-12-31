@@ -305,16 +305,11 @@ public class RaftNode {
         }
 
         // 2. 如果 votedFor 为空或者为 candidateId，并且候选人的日志至少和自己一样新，那么就投票给他（5.2 节，5.4 节）
-
-        // todo, 如果 term = 先不做拒绝 && params.lastLogIndex > leader.lastLogIndex, leader 需要变为 follower 并投票吗？
-        // `Candidate.term = Leader.currentTerm && Leader.lastLogIndex < Candidate.lastLogIndex`
-        // Leader 也不能投票给 Candidate，因为 Candidate.term = Leader.currentTerm 会造成 term 在集群中的混乱。
-
-        if (this.getRaftRole().equals(RaftRole.Leader)) {
-            logger.info("{} is leader reject {} vote",
-                    this.getNodeId(), params.getCandidateId());
-            return new RequestVoteResult(this.currentTerm, false);
-        }
+//          if (this.getRaftRole().equals(RaftRole.Leader)) {
+//            logger.info("{} is leader reject {} vote",
+//                    this.getNodeId(), params.getCandidateId());
+//            return new RequestVoteResult(this.currentTerm, false);
+//        }
 
         if (this.getVotedFor() == null || this.getVotedFor().equals(params.getCandidateId())) {
             // info: 判断 commitIndex 和 log.last().logIndex
@@ -397,7 +392,7 @@ public class RaftNode {
      * @param params params
      */
     private void beFollowerWithBiggerTerm(AppendEntriesParams params) {
-        if (params.getTerm() > this.currentTerm && !this.getRaftRole().equals(RaftRole.Follower)) {
+        if (params.getTerm() > this.currentTerm) {
             String reason = "AppendEntriesParams:" + params.getLeaderId() + ", " + params.getTerm();
             setRaftRole(RaftRole.Follower, reason);
             this.currentTerm = params.getTerm();

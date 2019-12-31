@@ -15,15 +15,19 @@
 7. **Leader** 是否接受 `appendEntries`？
     1. `term > currentTerm`，**Leader** 直接变为 **Follower**，然后以 **Follower** 角色继续处理请求
     2. `term = currentTerm`，**Leader** 是否可以直接拒绝？
+    > 接受 `appendEntries`，不用特意考虑是否是 **Leader**
+    > 见部分开源项目的实现,[lni/dragonboat-raft.go#L1835](https://github.com/lni/dragonboat/blob/c35c20cc3e976ff75636c6b7bad0da9b100ead01/internal/raft/raft.go#L1835)
 8. **Leader** 是否接受 `requestVote`？
-    > 如果 `requestVote` `term > currentTerm`，那么 **Leader** 变为 **Follower**，并进行投票逻辑
+    1. 如果 `requestVote` `term > currentTerm`，那么 **Leader** 变为 **Follower**，并进行投票逻辑
     > 如果 `requestVote` `term = currentTerm`，**Leader** 是否需要执行投票逻辑？
     > https://github.com/hashicorp/raft/issues/235
     > Leader 可能拒绝 `term = currentTerm` 的投票
     > ~~Leader 的 lastLogIndex 小于 Candidate 的 lastLogIndex 时，Leader 投票给 Candidate，Leader 变为 Follower~~
-    > `Candidate.term = Leader.currentTerm && Leader.lastLogIndex < Candidate.lastLogIndex`  
-    > Leader 也不能投票给 Candidate，因为 Candidate.term = Leader.currentTerm 会造成 term 在集群中的混乱。
-    > 可能会有具有相同 term 不同 节点担任 Leader。
+    > ~~`Candidate.term = Leader.currentTerm && Leader.lastLogIndex < Candidate.lastLogIndex`~~  
+    > ~~Leader 也不能投票给 Candidate，因为 Candidate.term = Leader.currentTerm 会造成 term 在集群中的混乱。~~
+    > ~~可能会有具有相同 term 不同 节点担任 Leader。~~
+    > 接受 `requestVote`，不用特意考虑是否是 **Leader**
+    > 见部分开源项目的实现,[lni/dragonboat-raft.go#L1835](https://github.com/lni/dragonboat/blob/c35c20cc3e976ff75636c6b7bad0da9b100ead01/internal/raft/raft.go#L1835)
 
 节点各角色下的超时时间(raft 论文中，只有一个超时定时器，这里的实现分成两个，一个 Follower 的超时定时器，一个 Candidate 的超时定时器)
 
@@ -39,12 +43,12 @@
 
 ## node send or handle rpc or time out
 
-| send or handle rpc        | Follower | Leader | Condidate |
+| send or handle rpc        | Follower | Leader | Candidate |
 | ------------------------- | -------- | ------ | --------- |
 | send `AppendEntries`      | No       | Yes    | No        |
 | send `RequestVote`        | No       | No     | Yes       |
-| receive ``AppendEntries`` | Yes      | ?      | Yes       |
-| receive `RequestVote`     | Yes      | ?      | Yes       |
+| receive ``AppendEntries`` | Yes      | [lni/dragonboat-raft.go#L1835](https://github.com/lni/dragonboat/blob/c35c20cc3e976ff75636c6b7bad0da9b100ead01/internal/raft/raft.go#L1835)      | Yes       |
+| receive `RequestVote`     | Yes      | [lni/dragonboat-raft.go#L1835](https://github.com/lni/dragonboat/blob/c35c20cc3e976ff75636c6b7bad0da9b100ead01/internal/raft/raft.go#L1835)      | Yes       |
 | heartbeat time out        | Yes      | No     | No        |
 | election time out         | No       | No     | Yes       |
 
@@ -179,3 +183,8 @@
 - [raft算法与paxos算法相比有什么优势，使用场景有什么差异？ - 朱一聪的回答 - 知乎](https://www.zhihu.com/question/36648084/answer/82332860)
 - [Raft 实现指北-开篇](https://www.hashcoding.net/2018/01/01/Raft-%E5%AE%9E%E7%8E%B0%E6%8C%87%E5%8C%97-%E5%BC%80%E7%AF%87/)
 - [Notes on Raft, the consensus protocol](https://indradhanush.github.io/blog/notes-on-raft/)
+
+RaftConsensusServiceImpl.requestVote 的实现： [RaftConsensusServiceImpl.java#L67 ](https://github.com/wenweihu86/raft-java/blob/bd706cf1c7830a8de01eab9f39a2fb5fe1fe4b9a/raft-java-core/src/main/java/com/github/wenweihu86/raft/service/impl/RaftConsensusServiceImpl.java#L67)，
+当处理 requestVote 的 Node-A 的状态是 `Leader`，且 `Candidate`(Node-B) 的 term (1234) 与 `Leader` 的 currentTerm(1234) 的状态相等。
+这里有个疑问，如果 Node-A 通过了投票(符合投票要求)，并 stepDown 为 `Follower`，
+而 Node-B 成功当选 `Leader`，那么集群中就已经完成 `Leader` 更换，但是集群的 term(1234) 并没有变更，这对于集群来说，是否会有问题？
